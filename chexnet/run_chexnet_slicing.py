@@ -1,6 +1,3 @@
-load_ext autoreload
-autoreload 2
-
 import logging
 
 import argparse
@@ -37,7 +34,7 @@ def output(task_name, immediate_ouput):
 def parse_args():
     parser = argparse.ArgumentParser(description='Run chexnet slicing experiments')
     parser.add_argument('--data_name', default='CXR8', help='Dataset name')
-    parser.add_argument('cxrdata_path', 
+    parser.add_argument('--cxrdata_path', 
                         default=f"/dfs/scratch1/senwu/mmtl/emmental-tutorials/chexnet/data/nih_labels.csv",
                         help='Path to labels')
     parser.add_argument('--cxrimage_path', 
@@ -86,6 +83,30 @@ if __name__=="__main__":
     # Getting transforms
     cxr8_transform = get_data_transforms(DATA_NAME)
 
+    # Getting task to label dict
+    # All possible tasks in dataloader
+    all_tasks = CXR8_TASK_NAMES +['Abnormal']
+    if 'CXR8' in args.tasks:
+        # Standard chexnet
+        logging.info('Using all CXR8 tasks')
+        task_list = CXR8_TASK_NAMES
+        add_binary_triage_label=False
+    elif 'TRIAGE' in args.tasks:
+        # Binary triage
+        logging.info('Using only Abnormal task')
+        task_list = ['Abnormal']
+        add_binary_triage_label=True
+    else:
+        # Otherwise, making sure tasks are valid
+        logging.info('Using only specified tasks')
+        task_list = args.tasks
+        for task in task_list:
+            assert(task in all_tasks)
+        add_binary_triage_label=True
+
+    task_to_label_dict = {task_name: task_name for task_name in task_list}
+    print(task_to_label_dict)
+
     # Creating datasets
     datasets = {}
 
@@ -99,28 +120,10 @@ if __name__=="__main__":
             transform=cxr8_transform[split],
             sample=0,
             seed=1701,
+            add_binary_triage_label=add_binary_triage_label,
         )
 
         logger.info(f"Loaded {split} split for {DATA_NAME}.")
-
-    # Getting task to label dict
-    # All possible tasks in dataloader
-    all_tasks = CXR8_TASK_NAMES +['Abnormal']
-    if args.tasks == 'CXR8':
-        # Standard chexnet
-        task_list = CXR8_TASK_NAMES:
-    elif:
-        # Binary triage
-        args.tasks == 'TRIAGE':
-        task_list = ['Abnormal']
-    else:
-        # Otherwise, making sure tasks are valid
-        task_list = args.tasks
-        for task in task_list:
-            assert(task in all_tasks)
-
-    task_to_label_dict = {task_name: task_name for task_name in task_list}
-    print(task_to_label_dict)
 
     # Building dataloaders
     dataloaders = []

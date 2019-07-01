@@ -82,8 +82,8 @@ class CXR8Dataset(EmmentalDataset):
         Y_dict = {}
         
         if add_binary_triage_label:
+            self.df['Abnormal'] = self.df[self.PRED_LABEL].sum(axis=1) > 0
             self.PRED_LABEL = self.PRED_LABEL + ['Abnormal']
-            self.df['Abnormal'] = self.df.sum(axis=1) > 0
 
         for idx in range(len(self.df)):
             X_dict["image_name"].append(self.df.index[idx])

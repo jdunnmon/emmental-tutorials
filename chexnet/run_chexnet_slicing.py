@@ -88,8 +88,21 @@ if __name__=="__main__":
                     "min_lr": 1e-6,
                 },
             },
-            "logging_config": {"evaluation_freq": 4000, "checkpointing": False},
-        }
+            "logging_config": {
+                "counter_unit": "epoch",
+                "evaluation_freq": 1,
+                "writer_config": {"writer": "tensorboard", "verbose": True},
+                "checkpointing": True,
+                "checkpointer_config": {
+                    "checkpoint_path": None,
+                    "checkpoint_freq": 1,
+                    "checkpoint_metric": {f"model/val/all/loss": "min"},
+                    "checkpoint_task_metrics": {"model/train/all/loss": "min"},
+                    "checkpoint_runway": 0,
+                    "checkpoint_clear": True,
+                },
+            },
+        },
     )
 
     # Save command line argument into file
@@ -222,7 +235,7 @@ if __name__=="__main__":
             ],
             loss_func=partial(ce_loss, task_name),
             output_func=partial(output, task_name),
-            scorer=Scorer(metrics=["accuracy", "roc_auc"]),
+            scorer=Scorer(metrics=["roc_auc", "f1", "precision", "recall", "accuracy"]),
         )
         for task_name in task_list
     ]

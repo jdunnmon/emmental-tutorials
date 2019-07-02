@@ -2,6 +2,7 @@ import logging
 
 import argparse
 from functools import partial
+import sys
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -17,6 +18,9 @@ from modules.classification_module import ClassificationModule
 from modules.torch_vision_encoder import TorchVisionEncoder
 from task_config import CXR8_TASK_NAMES
 from transforms import get_data_transforms
+from emmental.utils.parse_arg import str2bool
+sys.path.append('../superglue')
+from utils import write_to_file
 
 # Initializing logs
 logger = logging.getLogger(__name__)
@@ -42,20 +46,39 @@ def parse_args():
                         help='Path to images')
     parser.add_argument('--tasks', default='CXR8', type=str, nargs='+',
                         help='list of tasks; if CXR8, all CXR8; if TRIAGE, normal/abnormal')
-
+    parser.add_argument(
+        "--slices", type=str2bool, default=False, help="Whether to include slices"
+    )
+    parser.add_argument(
+        "--train", type=str2bool, default=True, help="Whether to train the model"
+    )
     args = parser.parse_args()
     return args
 
 if __name__=="__main__":
     # Parsing command line arguments
     args = parse_args()
+    
+    # Ensure that global state is fresh
+    #Meta.reset()
         
+    # Initialize Emmental
+    #config = parse_arg_to_config(args)
+    ## HACK: handle None in model_path, proper way to handle this in the
+    ## next release of Emmental
+    #if (
+    #    config["model_config"]["model_path"]
+    #    and config["model_config"]["model_path"].lower() == "none"
+    #):
+    #    config["model_config"]["model_path"] = None
+    #emmental.init(config["meta_config"]["log_path"], config=config)
+    
     # Configuring run data
     Meta.update_config(
         config={
             "meta_config": {"seed": 1701, "device": 0},
             "learner_config": {
-                "n_epochs": 20,
+                "n_epochs": 2,
                 "valid_split": "val",
                 "optimizer_config": {"optimizer": "sgd", "lr": 0.001, "l2": 0.000},
                 "lr_scheduler_config": {
@@ -69,6 +92,20 @@ if __name__=="__main__":
         }
     )
 
+    # Save command line argument into file
+    cmd_msg = " ".join(sys.argv)
+    logger.info(f"COMMAND: {cmd_msg}")
+    write_to_file(Meta.log_path, "cmd.txt", cmd_msg)
+    
+    #Meta.config["learner_config"]["global_evaluation_metric_dict"] = {
+    #    f"model/SuperGLUE/{split}/score": partial(superglue_scorer, split=split)
+    #    for split in ["val"]
+    #}
+    
+    # Save Emmental config into file
+    logger.info(f"Config: {Meta.config}")
+    write_to_file(Meta.log_path, "config.txt", Meta.config)
+    
     # Getting paths to data
     DATA_NAME = args.data_name
     CXRDATA_PATH = args.cxrdata_path
@@ -139,12 +176,28 @@ if __name__=="__main__":
                 num_workers=8,
             )
         )
-        logger.info(f"Built dataloader for {datasets[split].name} {split} set.")
+        #if args.slices:
+        #    logger.info("Initializing task-specific slices")
+        #    slice_func_dict = slicing.slice_func_dict[task_name]
+        #    # Include general purpose slices
+        #    if args.general_slices:
+        #        logger.info("Including general slices")
+        #        slice_func_dict.update(slicing.slice_func_dict["general"])
 
+        #    task_dataloaders = slicing.add_slice_labels(
+        #        task_name, task_dataloaders, slice_func_dict
+        #    )
+
+        #    slice_tasks = slicing.add_slice_tasks(
+        #        task_name, task, slice_func_dict, args.slice_hidden_dim
+        #    )
+        #    tasks.extend(slice_tasks)
+        logger.info(f"Built dataloader for {datasets[split].name} {split} set.")
 
     # Building Emmental tasks
     input_shape = (3, 224, 224)
 
+    # Load pretrained model if necessary
     cnn_module = TorchVisionEncoder(CNN_ENCODER, pretrained=True)
     classification_layer_dim = cnn_module.get_frm_output_size(input_shape)
 
@@ -175,8 +228,41 @@ if __name__=="__main__":
     ]
 
     # Defining model and trainer
-    mtl_model = EmmentalModel(name="Chexnet", tasks=tasks)
-    emmental_learner = EmmentalLearner()
+    model = EmmentalModel(name="Chexnet", tasks=tasks)
+    
+    if args.train:
+        # Training model
+        emmental_learner = EmmentalLearner()
+        emmental_learner.learn(model, dataloaders)
+        
+    # If model is slice-aware, slice scores will be calculated from slice heads
+    # If model is not slice-aware, manually calculate performance on slices
+    if not args.slices:
+        slice_func_dict = {}
+        slice_keys = args.task
+        if args.general_slices:
+            slice_keys.append("general")
 
-    # Training model
-    emmental_learner.learn(mtl_model, dataloaders)
+        for k in slice_keys:
+            slice_func_dict.update(slicing.slice_func_dict[k])
+
+        scores = slicing.score_slices(model, dataloaders, args.task, slice_func_dict)
+    else:
+        scores = model.score(dataloaders)
+            
+    # Save metrics into file
+    logger.info(f"Metrics: {scores}")
+    write_to_file(Meta.log_path, "metrics.txt", scores)
+    
+    
+    # Save best metrics into file
+    if args.train:
+        logger.info(
+            f"Best metrics: "
+            f"{emmental_learner.logging_manager.checkpointer.best_metric_dict}"
+        )
+        write_to_file(
+            Meta.log_path,
+            "best_metrics.txt",
+            emmental_learner.logging_manager.checkpointer.best_metric_dict,
+        )
